@@ -132,6 +132,8 @@ def model_fn(features, labels, mode, params):
 
   if params["use_tpu"]:
     optimizer = tpu_optimizer.CrossShardOptimizer(optimizer)
+  else:
+    optimizer = tf.contrib.estimator.TowerOptimizer(optimizer)
 
   train_op = optimizer.minimize(loss, tf.train.get_global_step())
 

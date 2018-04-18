@@ -137,8 +137,9 @@ def main(argv):
       params=dict(params, use_tpu=FLAGS.use_tpu),
     )
   else:
+      #model_fn=squeezenet_model.model_fn,
     estimator = tf.estimator.Estimator(
-      model_fn=squeezenet_model.model_fn,
+      model_fn=tf.contrib.estimator.replicate_model_fn(squeezenet_model.model_fn),
       config=run_config,
       params=dict(params, batch_size=FLAGS.batch_size, use_tpu=FLAGS.use_tpu),
     )
