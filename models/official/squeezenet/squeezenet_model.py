@@ -135,7 +135,8 @@ def model_fn(features, labels, mode, params):
 
   train_op = optimizer.minimize(loss, tf.train.get_global_step())
 
-  return tpu_estimator.TPUEstimatorSpec(
+  if params["use_tpu"]:
+    return tpu_estimator.TPUEstimatorSpec(
       mode=mode,
       loss=loss,
       train_op=train_op,
@@ -144,4 +145,17 @@ def model_fn(features, labels, mode, params):
           "classes": tf.argmax(input=logits, axis=1),
           "probabilities": tf.nn.softmax(logits, name="softmax_tensor")
       },
-  )
+    )
+  else:
+    foo = metric_fn(labels, logits, lr_repeat)
+    print(foo)
+    return tf.estimator.EstimatorSpec(
+      mode=mode,
+      loss=loss,
+      train_op=train_op,
+      eval_metric_ops=foo,
+      predictions={
+          "classes": tf.argmax(input=logits, axis=1),
+          "probabilities": tf.nn.softmax(logits, name="softmax_tensor")
+      },
+    )

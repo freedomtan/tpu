@@ -73,21 +73,24 @@ FLAGS = flags.FLAGS
 def main(argv):
   del argv
 
-  if FLAGS.master is None and FLAGS.tpu_name is None:
-    raise RuntimeError("You must specify either --master or --tpu_name.")
+  if FLAGS.use_tpu is True:
+    if FLAGS.master is None and FLAGS.tpu_name is None:
+      raise RuntimeError("You must specify either --master or --tpu_name.")
 
-  if FLAGS.master is not None:
-    if FLAGS.tpu_name is not None:
-      tf.logging.warn("Both --master and --tpu_name are set. Ignoring "
+    if FLAGS.master is not None:
+      if FLAGS.tpu_name is not None:
+        tf.logging.warn("Both --master and --tpu_name are set. Ignoring "
                       "--tpu_name and using --master.")
-    tpu_grpc_url = FLAGS.master
+      tpu_grpc_url = FLAGS.master
+    else:
+      tpu_cluster_resolver = (
+          tf.contrib.cluster_resolver.TPUClusterResolver(
+              FLAGS.tpu_name,
+              zone=FLAGS.tpu_zone,
+              project=FLAGS.gcp_project))
+      tpu_grpc_url = tpu_cluster_resolver.get_master()
   else:
-    tpu_cluster_resolver = (
-        tf.contrib.cluster_resolver.TPUClusterResolver(
-            FLAGS.tpu_name,
-            zone=FLAGS.tpu_zone,
-            project=FLAGS.gcp_project))
-    tpu_grpc_url = tpu_cluster_resolver.get_master()
+      tpu_grpc_url = None
 
   training_examples = 1300 * 1000 * FLAGS.num_epochs
   eval_examples = 50 * 1000
@@ -103,26 +106,42 @@ def main(argv):
       "num_epochs": FLAGS.num_epochs,
   }
 
-  run_config = tpu_config.RunConfig(
-      master=tpu_grpc_url,
-      model_dir=FLAGS.model_dir,
-      save_checkpoints_secs=FLAGS.save_checkpoints_secs,
-      session_config=tf.ConfigProto(
+  #run_config = tf.estimator.RunConfig();
+  if FLAGS.use_tpu is True:
+    run_config = tpu_config.RunConfig(
+        master=tpu_grpc_url,
+        model_dir=FLAGS.model_dir,
+        save_checkpoints_secs=FLAGS.save_checkpoints_secs,
+        session_config=tf.ConfigProto(
           allow_soft_placement=True, log_device_placement=False),
-      tpu_config=tpu_config.TPUConfig(
+        tpu_config=tpu_config.TPUConfig(
           iterations_per_loop=100,
           num_shards=FLAGS.num_shards,
-      ),
-  )
+        ),
+    )
+  else:
+    run_config = tf.estimator.RunConfig(
+        model_dir=FLAGS.model_dir,
+        save_checkpoints_secs=FLAGS.save_checkpoints_secs,
+        session_config=tf.ConfigProto(
+          allow_soft_placement=True, log_device_placement=False),
+    ) 
 
-  estimator = tpu_estimator.TPUEstimator(
+  if FLAGS.use_tpu is True:
+    estimator = tpu_estimator.TPUEstimator(
       model_fn=squeezenet_model.model_fn,
       use_tpu=FLAGS.use_tpu,
       config=run_config,
       train_batch_size=FLAGS.batch_size,
       eval_batch_size=FLAGS.batch_size,
       params=dict(params, use_tpu=FLAGS.use_tpu),
-  )
+    )
+  else:
+    estimator = tf.estimator.Estimator(
+      model_fn=squeezenet_model.model_fn,
+      config=run_config,
+      params=dict(params, batch_size=FLAGS.batch_size, use_tpu=FLAGS.use_tpu),
+    )
 
   num_evals = max(FLAGS.num_evals, 1)
   examples_per_eval = training_examples // num_evals
