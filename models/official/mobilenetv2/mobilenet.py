@@ -226,6 +226,11 @@ flags.DEFINE_integer(
     'This shuffling is done after prefetching is done. '
     'Set to 0 to disable')
 
+flags.DEFINE_bool(
+    'quantize', False, 'fake quantization')
+
+flags.DEFINE_integer(
+    'quant_delay', 100000, 'when to start quantization')
 
 FLAGS = flags.FLAGS
 
@@ -475,6 +480,12 @@ def model_fn(features, labels, mode, params):
       label_smoothing=0.1)
   loss = tf.losses.get_total_loss(add_regularization_losses=True)
 
+  if FLAGS.quantize:
+    if mode == tf.estimator.ModeKeys.EVAL:
+      tf.contrib.quantize.create_eval_graph()
+    else:
+      tf.contrib.quantize.create_training_graph(quant_delay=FLAGS.quant_delay)
+
   initial_learning_rate = FLAGS.learning_rate * FLAGS.train_batch_size / 256
   final_learning_rate = 0.0001 * initial_learning_rate
 
@@ -514,6 +525,9 @@ def model_fn(features, labels, mode, params):
 
     if FLAGS.use_tpu:
       optimizer = tpu_optimizer.CrossShardOptimizer(optimizer)
+    else:
+      tf.logging.info('Using TowerOptimizer')
+      optimizer = tf.contrib.estimator.TowerOptimizer(optimizer)
 
     update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
     with tf.control_dependencies(update_ops):
@@ -540,9 +554,12 @@ def model_fn(features, labels, mode, params):
 
     eval_metrics = (metric_fn, [labels, eval_predictions])
 
-  return tpu_estimator.TPUEstimatorSpec(
+  if FLAGS.use_tpu:
+    return tpu_estimator.TPUEstimatorSpec(
       mode=mode, loss=loss, train_op=train_op, eval_metrics=eval_metrics)
-
+  else:
+    return tf.estimator.EstimatorSpec(
+      mode=mode, loss=loss, train_op=train_op, eval_metric_ops=eval_metrics)
 
 class LoadEMAHook(tf.train.SessionRunHook):
   """Hook to load EMA into their corresponding variables."""
@@ -630,8 +647,12 @@ def main(unused_argv):
           num_shards=FLAGS.num_shards,
           per_host_input_for_training=per_host_input_for_training))
 
+  tmp_model_fn = model_fn
+  if not FLAGS.use_tpu:
+    tmp_model_fn = tf.contrib.estimator.replicate_model_fn(tmp_model_fn)
+
   inception_classifier = tpu_estimator.TPUEstimator(
-      model_fn=model_fn,
+      model_fn=tmp_model_fn,
       use_tpu=FLAGS.use_tpu,
       config=run_config,
       params=params,
